@@ -98,44 +98,10 @@ X_train, X_test, y_train, y_test = train_test_split(X, y_encoded, test_size=0.2,
 model = SVC(kernel='rbf', C=10, gamma='scale', class_weight='balanced')
 model.fit(X_train, y_train)
 
-# Evaluate the model 
+#save the model
 
-y_pred = model.predict(X_test)
+import pickle
 
-accuracy = accuracy_score(y_test, y_pred)
-
-print(f"Accuracy: {accuracy*100:.2f}%")
-
-print("\nClassification Report:")
-print(classification_report(y_test, y_pred,target_names=label_encoder.classes_))
-
-# Function to record live audio
-import sounddevice as sd
-import scipy.io.wavfile as wav
-
-def record_audio(duration=5, fs=44100, filename="live_audio.wav"):
-    print("Recording(Start Saying Somthing)...")
-    recording = sd.rec(int(duration * fs), samplerate=fs, channels=1)
-    sd.wait()
-    wav.write(filename, fs, recording)
-    print("Recording complete.")
-
-    # Real time emotion prediction
-
-def predict_emotion_live():
-      record_audio()
-      y,sr = librosa.load("live_audio.wav", sr=44100)
-      y, _ = librosa.effects.trim(y)
-
-      y = y/np.max(np.abs(y))
-      feature = extract_feature("live_audio.wav")
-      feature = feature.reshape(1, -1)
-
-      feature = scaler.transform(feature)
-
-      prediction = model.predict(feature)
-      emotion = label_encoder.inverse_transform(prediction)
-
-      print("Predicted Emotion:", emotion[0])
-
-predict_emotion_live()
+pickle.dump(model, open("svm_emotion_model.pkl", "wb"))
+pickle.dump(label_encoder, open("label_encoder.pkl", "wb"))
+pickle.dump(scaler, open("scaler.pkl", "wb"))
