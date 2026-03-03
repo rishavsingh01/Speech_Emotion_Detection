@@ -25,9 +25,15 @@ def home():
 @app.route("/predict", methods=["POST"])
 def predict():
     file = request.files["audio"]
-    filepath = "uploaded.wav"
+
+    # Save inside static/uploads
+    upload_folder = "static/uploads"
+    os.makedirs(upload_folder, exist_ok=True)
+
+    filepath = os.path.join(upload_folder, file.filename)
     file.save(filepath)
 
+    # Feature extraction
     feature = extract_feature(filepath)
     feature = feature.reshape(1, -1)
     feature = scaler.transform(feature)
@@ -35,8 +41,11 @@ def predict():
     prediction = model.predict(feature)
     emotion = label_encoder.inverse_transform(prediction)
 
-    return render_template("index.html",
-                           prediction_text="Predicted Emotion: " + emotion[0])
+    return render_template(
+        "index.html",
+        prediction_text="Predicted Emotion: " + emotion[0],
+        audio_file=filepath   # 👈 send file path to HTML
+    )
 
 if __name__ == "__main__":
     app.run(debug=True)

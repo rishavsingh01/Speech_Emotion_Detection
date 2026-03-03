@@ -9,6 +9,15 @@
 <div class="container">
     <h1>🎙 Speech Emotion Recognition</h1>
 
+    {% if audio_file %}
+    <div style="margin-top:20px;">
+        <audio controls>
+            <source src="{{ audio_file }}" type="audio/wav">
+            Your browser does not support the audio element.
+        </audio>
+    </div>
+    {% endif %}
+
     <form action="/predict" method="post" enctype="multipart/form-data">
         <input type="file" name="audio" accept=".wav" required>
         <button type="submit">Predict Emotion</button>
