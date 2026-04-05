@@ -19,3 +19,6 @@ matplotlib    # for plotting and visualization
 
 # RAVDESS dataset for speech emotion recognition
 ravdess        # for accessing the RAVDESS dataset
+
+opencv-python  # for image processing (if needed for visualization)
+deepface       # for facial emotion recognition (if needed)

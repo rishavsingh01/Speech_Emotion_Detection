@@ -1,6 +1,8 @@
 # Imporing necessary libraries
-
+from json import encoder
+from json import encoder
 import os
+from pyexpat import features
 import librosa
 import numpy as np
 import pandas as pd
@@ -26,13 +28,42 @@ emotion_dict = {
 
 # Feature extraction function
 
-def extract_feature(file_path):
-  audio, sample_rate = librosa.load(file_path, duration=6, offset=0.5)
+def extract_feature(audio, sample_rate):
+
+  if len(audio)<sample_rate:
+     audio = np.pad(audio, (0, sample_rate - len(audio)))
+
   mfcc = librosa.feature.mfcc(y=audio, sr=sample_rate, n_mfcc=40)
+
   mfcc_mean = np.mean(mfcc, axis=1)
   mfcc_std = np.std(mfcc, axis=1)
 
   return np.hstack((mfcc_mean, mfcc_std))
+
+def split_audio(audio, sr, chunk_duration=3):
+    chunk_sample = int(chunk_duration * sr)
+
+    chunks = []
+    for i in range(0, len(audio), chunk_sample):
+        chunk = audio[i:i + chunk_sample]
+
+        if len(chunk) < sr:  # Skip chunks shorter than 1 second
+            chunks.append(chunk)
+
+    return chunks
+
+def analyze_emotion(audio, sr, predict_function):
+    chunks = split_audio(audio, sr)
+
+    timeline = []
+    for i, chunk in enumerate(chunks):
+        emotion = predict_function(chunk, sr)
+        timeline.append({
+           "time": f"{i * 3}-{(i+1) * 3} seconds",
+            "emotion": emotion
+        })
+
+    return timeline
 
 # Load dataset and prepare features and labels
 
@@ -66,8 +97,9 @@ for actor in os.listdir(dataset_path):
       if emotion not in allowed_emotions:
         continue
 
-      #Extract MFCC features
-      feature = extract_feature(file_path)
+      #Extract MFCC feature
+      audio,sample_rate = librosa.load(file_path, duration=6, offset=0.5)
+      feature = extract_feature(audio, sample_rate)
 
       X.append(feature)
       y.append(emotion)
@@ -101,7 +133,15 @@ model.fit(X_train, y_train)
 #save the model
 
 import pickle
+import numpy as np
 
 pickle.dump(model, open("svm_emotion_model.pkl", "wb"))
 pickle.dump(label_encoder, open("label_encoder.pkl", "wb"))
 pickle.dump(scaler, open("scaler.pkl", "wb"))
+
+def predict_emotion(audio, sr):
+    feature = extract_feature(audio, sr)
+    feature = scaler.transform([features])
+
+    prediction = model.predict(feature)
+    return label_encoder.inverse_transform(prediction)[0]

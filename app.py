@@ -1,51 +1,63 @@
-from flask import Flask, render_template, request
-import pickle
-import librosa
+import sounddevice as sd
 import numpy as np
-import os
+import json
 
-app = Flask(__name__)
+from speech_emotion import predict_emotion
+from facial_emotion import detect_face_emotion
 
-# Load trained files
-model = pickle.load(open("svm_emotion_model.pkl", "rb"))
-scaler = pickle.load(open("scaler.pkl", "rb"))
-label_encoder = pickle.load(open("label_encoder.pkl", "rb"))
 
-def extract_feature(file_path):
-    audio, sample_rate = librosa.load(file_path, duration=6, offset=0.5)
-    mfcc = librosa.feature.mfcc(y=audio, sr=sample_rate, n_mfcc=40)
-    mfcc_mean = np.mean(mfcc, axis=1)
-    mfcc_std = np.std(mfcc, axis=1)
-    return np.hstack((mfcc_mean, mfcc_std))
+# 🎤 Record Audio
+def record_audio(duration=3, fs=22050):
+    print("Recording...")
+    audio = sd.rec(int(duration * fs), samplerate=fs, channels=1)
+    sd.wait()
+    return audio.flatten(), fs
 
-@app.route("/")
-def home():
-    return render_template("index.html")
 
-@app.route("/predict", methods=["POST"])
-def predict():
-    file = request.files["audio"]
+# 🔄 Fusion Logic
+def final_emotion(speech_emotion, face_emotion):
+    if speech_emotion == face_emotion:
+        return speech_emotion
+    else:
+        return "Mixed Emotion"
 
-    # Save inside static/uploads
-    upload_folder = "static/uploads"
-    os.makedirs(upload_folder, exist_ok=True)
 
-    filepath = os.path.join(upload_folder, file.filename)
-    file.save(filepath)
-
-    # Feature extraction
-    feature = extract_feature(filepath)
-    feature = feature.reshape(1, -1)
-    feature = scaler.transform(feature)
-
-    prediction = model.predict(feature)
-    emotion = label_encoder.inverse_transform(prediction)
-
-    return render_template(
-        "index.html",
-        prediction_text="Predicted Emotion: " + emotion[0],
-        audio_file=filepath   # 👈 send file path to HTML
-    )
-
+# 🚀 Main Execution
 if __name__ == "__main__":
-    app.run(debug=True)
+
+    print("\n=== Emotion Recognition System ===\n")
+
+    # Step 1: Record Audio
+    audio, sr = record_audio(duration=6)
+
+    # Step 2: Speech Emotion Timeline
+    timeline = predict_emotion(audio, sr, predict_emotion)
+
+    print("\nSpeech Emotion Timeline:")
+    for t in timeline:
+        print(t)
+
+    # Step 3: Final Speech Emotion
+    speech_emotion = timeline[-1]["emotion"]
+
+    # Step 4: Face Emotion
+    face_emotion = detect_face_emotion()
+
+    print("\nFace Emotion:", face_emotion)
+
+    # Step 5: Final Fusion
+    final = final_emotion(speech_emotion, face_emotion)
+
+    print("\nFinal Emotion:", final)
+
+    # Save results
+    result = {
+        "speech_timeline": timeline,
+        "face_emotion": face_emotion,
+        "final_emotion": final
+    }
+
+    with open("outputs/results.json", "w") as f:
+        json.dump(result, f, indent=4)
+
+    print("\nResults saved in outputs/results.json")
