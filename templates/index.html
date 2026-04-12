@@ -1,31 +1,40 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Speech Emotion Recognition</title>
+    <meta charset="UTF-8">
+    <title>Emotion Recognition System</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
 
 <div class="container">
-    <h1>🎙 Speech Emotion Recognition</h1>
+    <h1>🎯 Emotion Recognition System</h1>
 
-    {% if audio_file %}
-    <div style="margin-top:20px;">
-        <audio controls>
-            <source src="{{ audio_file }}" type="audio/wav">
-            Your browser does not support the audio element.
-        </audio>
+    <div class="card">
+        <h2>Record Audio</h2>
+        <button onclick="startProcess()">Start Detection</button>
+        <p id="status">Click button to start...</p>
     </div>
-    {% endif %}
 
-    <form action="/predict" method="post" enctype="multipart/form-data">
-        <input type="file" name="audio" accept=".wav" required>
-        <button type="submit">Predict Emotion</button>
-    </form>
+    <div class="card">
+        <h2>Live Video Feed</h2>
+        <img src="{{ url_for('video_feed') }}" alt="Video Feed" width="500">
+    </div>
 
-    {% if prediction_text %}
-        <h2>{{ prediction_text }}</h2>
-    {% endif %}
+    <div class="card">
+        <h2>Speech Emotion Timeline</h2>
+        <ul id="timeline"></ul>
+    </div>
+
+    <div class="card">
+        <h2>Face Emotion</h2>
+        <p id="faceEmotion">-</p>
+    </div>
+
+    <div class="card highlight">
+        <h2>Final Emotion</h2>
+        <p id="finalEmotion">-</p>
+    </div>
 </div>
 
 <footer class="footer">
@@ -47,6 +56,39 @@
         </p>
     </div>
 </footer>
+
+<script>
+function startProcess() {
+    document.getElementById("status").innerText = "Processing... Please wait";
+
+    fetch('/process', {
+        method: 'POST'
+    })
+    .then(res => res.json())
+    .then(data => {
+        document.getElementById("status").innerText = "Done ✅";
+
+        // Timeline
+        let timeline = document.getElementById("timeline");
+        timeline.innerHTML = "";
+        data.speech_timeline.forEach(item => {
+            let li = document.createElement("li");
+            li.innerText = `${item.time} sec → ${item.emotion}`;
+            timeline.appendChild(li);
+        });
+
+        // Face Emotion
+        document.getElementById("faceEmotion").innerText = data.face_emotion;
+
+        // Final Emotion
+        document.getElementById("finalEmotion").innerText = data.final_emotion;
+    })
+    .catch(err => {
+        document.getElementById("status").innerText = "Error occurred ❌";
+        console.error(err);
+    });
+}
+</script>
 
 </body>
 </html>

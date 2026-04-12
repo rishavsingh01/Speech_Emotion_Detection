@@ -1,10 +1,11 @@
+from flask import Flask, render_template, request, jsonify
+from flask import Response
 import sounddevice as sd
 import numpy as np
-import json
+import cv2 
 
-from speech_emotion import predict_emotion
+from speech_emotion import analyze_emotion,predict_emotion
 from facial_emotion import detect_face_emotion
-
 
 # 🎤 Record Audio
 def record_audio(duration=3, fs=22050):
@@ -21,43 +22,58 @@ def final_emotion(speech_emotion, face_emotion):
     else:
         return "Mixed Emotion"
 
+app = Flask(__name__)
 
-# 🚀 Main Execution
-if __name__ == "__main__":
+@app.route('/')
+def home():
+    return render_template('index.html')
 
-    print("\n=== Emotion Recognition System ===\n")
+@app.route('/process', methods=['POST'])
+def process():
+    try:
+        audio, sr = record_audio(duration=9)
 
-    # Step 1: Record Audio
-    audio, sr = record_audio(duration=6)
+        timeline = analyze_emotion(audio, sr, predict_emotion)
+        speech_emotion = timeline[-1]["emotion"]
 
-    # Step 2: Speech Emotion Timeline
-    timeline = predict_emotion(audio, sr, predict_emotion)
+        face_emotion = "Using Webcam"
+        final = final_emotion(speech_emotion, face_emotion)
 
-    print("\nSpeech Emotion Timeline:")
-    for t in timeline:
-        print(t)
+        result = {
+            "speech_timeline": timeline,
+            "face_emotion": face_emotion,
+            "final_emotion": final
+        }
+        return jsonify(result)
+    
+    except Exception as e:
+        print(f"Error processing emotions: {e}")
+        return jsonify({"error": str(e)})
+    
+def generate_frames():
+    cap = cv2.VideoCapture(0)
 
-    # Step 3: Final Speech Emotion
-    speech_emotion = timeline[-1]["emotion"]
+    while True:
+        success, frame = cap.read()
+        if not success:
+            break
+        else:
+            #Detect emotion( already done in process route, so we can skip this step here)
+            emotion = detect_face_emotion(frame)
 
-    # Step 4: Face Emotion
-    face_emotion = detect_face_emotion()
+            # putting emotion text on frame
+            cv2.putText(frame,f"Emotion: {emotion}", (10, 30), cv2.FONT_HERSHEY_TRIPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
 
-    print("\nFace Emotion:", face_emotion)
+            # Encode frame 
+            ret, buffer = cv2.imencode('.jpg', frame)
+            frame = buffer.tobytes()
 
-    # Step 5: Final Fusion
-    final = final_emotion(speech_emotion, face_emotion)
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
 
-    print("\nFinal Emotion:", final)
+@app.route('/video_feed')
+def video_feed():
+    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')            
 
-    # Save results
-    result = {
-        "speech_timeline": timeline,
-        "face_emotion": face_emotion,
-        "final_emotion": final
-    }
-
-    with open("outputs/results.json", "w") as f:
-        json.dump(result, f, indent=4)
-
-    print("\nResults saved in outputs/results.json")
+if __name__ == '__main__':
+    app.run(debug=True)
