@@ -11,7 +11,7 @@ import pickle
 # 🔹 Load Pre-trained Model
 # ==============================
 
-model = pickle.load(open("svm_emotion_model.pkl", "rb"))
+model = pickle.load(open("speech_emotion_model.pkl", "rb"))
 scaler = pickle.load(open("scaler.pkl", "rb"))
 label_encoder = pickle.load(open("label_encoder.pkl", "rb"))
 
