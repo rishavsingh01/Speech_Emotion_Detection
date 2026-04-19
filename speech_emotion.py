@@ -1,90 +1,213 @@
-# ==============================
-# 🎤 Speech Emotion Detection
-# Clean Production Version
-# ==============================
-
 import numpy as np
 import librosa
 import pickle
 
-# ==============================
-# 🔹 Load Pre-trained Model
-# ==============================
+MODEL_PATH = "speech_emotion_model.pkl"
+SCALER_PATH = "scaler.pkl"
+ENCODER_PATH = "label_encoder.pkl"
 
-model = pickle.load(open("speech_emotion_model.pkl", "rb"))
-scaler = pickle.load(open("scaler.pkl", "rb"))
-label_encoder = pickle.load(open("label_encoder.pkl", "rb"))
+DEFAULT_CHUNK_DURATION = 2.5
+DEFAULT_HOP_DURATION = 1.0
 
-# ==============================
-# 🔹 Feature Extraction
-# ==============================
+model = pickle.load(open(MODEL_PATH, "rb"))
+scaler = pickle.load(open(SCALER_PATH, "rb"))
+label_encoder = pickle.load(open(ENCODER_PATH, "rb"))
+
+
+def _fix_length(audio, sample_rate, target_duration=DEFAULT_CHUNK_DURATION):
+    target_len = int(target_duration * sample_rate)
+    audio = np.asarray(audio, dtype=np.float32)
+
+    if len(audio) < target_len:
+        return np.pad(audio, (0, target_len - len(audio)))
+    if len(audio) > target_len:
+        return audio[:target_len]
+    return audio
+
+
+def extract_feature_legacy(audio, sample_rate):
+    audio = _fix_length(audio, sample_rate)
+    mfcc = librosa.feature.mfcc(y=audio, sr=sample_rate, n_mfcc=40)
+    return np.hstack((np.mean(mfcc, axis=1), np.std(mfcc, axis=1))).astype(np.float32)
+
+
+def extract_feature_rich(audio, sample_rate):
+    audio = _fix_length(audio, sample_rate)
+    hop_length = 256
+    n_fft = 1024
+
+    stft = np.abs(librosa.stft(audio, n_fft=n_fft, hop_length=hop_length))
+    mfcc = librosa.feature.mfcc(
+        y=audio,
+        sr=sample_rate,
+        n_mfcc=40,
+        n_fft=n_fft,
+        hop_length=hop_length,
+    )
+    chroma = librosa.feature.chroma_stft(S=stft, sr=sample_rate, hop_length=hop_length)
+    mel = librosa.feature.melspectrogram(
+        y=audio,
+        sr=sample_rate,
+        n_fft=n_fft,
+        hop_length=hop_length,
+        n_mels=64,
+    )
+    contrast = librosa.feature.spectral_contrast(S=stft, sr=sample_rate)
+    zcr = librosa.feature.zero_crossing_rate(audio, hop_length=hop_length)
+    rms = librosa.feature.rms(S=stft, hop_length=hop_length)
+
+    feature_parts = []
+    for matrix in (mfcc, chroma, mel, contrast, zcr, rms):
+        feature_parts.append(np.mean(matrix, axis=1))
+        feature_parts.append(np.std(matrix, axis=1))
+
+    return np.hstack(feature_parts).astype(np.float32)
+
 
 def extract_feature(audio, sample_rate):
-    # Ensure minimum length
-    if len(audio) < sample_rate:
-        audio = np.pad(audio, (0, sample_rate - len(audio)))
+    expected = getattr(scaler, "n_features_in_", None)
+    legacy = extract_feature_legacy(audio, sample_rate)
+    rich = extract_feature_rich(audio, sample_rate)
 
-    # MFCC Features
-    mfcc = librosa.feature.mfcc(y=audio, sr=sample_rate, n_mfcc=40)
+    if expected is None:
+        return rich
+    if expected == len(rich):
+        return rich
+    if expected == len(legacy):
+        return legacy
 
-    mfcc_mean = np.mean(mfcc, axis=1)
-    mfcc_std = np.std(mfcc, axis=1)
+    chosen = rich if abs(len(rich) - expected) <= abs(len(legacy) - expected) else legacy
+    if len(chosen) > expected:
+        chosen = chosen[:expected]
+    elif len(chosen) < expected:
+        chosen = np.pad(chosen, (0, expected - len(chosen)))
 
-    # Return numeric feature vector
-    return np.hstack((mfcc_mean, mfcc_std)).astype(np.float32)
+    return chosen.astype(np.float32)
 
-# ==============================
-# 🔹 Split Audio into Chunks
-# ==============================
 
-def split_audio(audio, sr, chunk_duration=3):
-    chunk_sample = int(chunk_duration * sr)
+def split_audio(audio, sr, chunk_duration=DEFAULT_CHUNK_DURATION, hop_duration=DEFAULT_HOP_DURATION):
+    audio = np.asarray(audio, dtype=np.float32)
+    chunk_samples = max(1, int(chunk_duration * sr))
+    hop_samples = max(1, int(hop_duration * sr))
+
+    if len(audio) == 0:
+        return []
+
+    if len(audio) <= chunk_samples:
+        padded = np.pad(audio, (0, chunk_samples - len(audio)))
+        rms = float(np.sqrt(np.mean(np.square(padded))))
+        return [{"chunk": padded, "start": 0.0, "end": chunk_duration, "energy": rms}]
+
+    starts = list(range(0, len(audio) - chunk_samples + 1, hop_samples))
+    final_start = len(audio) - chunk_samples
+    if starts[-1] != final_start:
+        starts.append(final_start)
+
     chunks = []
-
-    for i in range(0, len(audio), chunk_sample):
-        chunk = audio[i:i + chunk_sample]
-
-        # Pad small chunks instead of skipping
-        if len(chunk) < sr:
-            chunk = np.pad(chunk, (0, sr - len(chunk)))
-
-        chunks.append(chunk)
+    for start in starts:
+        end = start + chunk_samples
+        chunk = audio[start:end]
+        rms = float(np.sqrt(np.mean(np.square(chunk))))
+        chunks.append(
+            {
+                "chunk": chunk,
+                "start": round(start / sr, 2),
+                "end": round(end / sr, 2),
+                "energy": rms,
+            }
+        )
 
     return chunks
 
-# ==============================
-# 🔹 Predict Emotion (Single Chunk)
-# ==============================
 
-def predict_emotion(audio, sr):
+def _softmax(scores):
+    scores = scores - np.max(scores, axis=1, keepdims=True)
+    exp_scores = np.exp(scores)
+    return exp_scores / np.sum(exp_scores, axis=1, keepdims=True)
+
+
+def _predict_probabilities(feature):
+    feature = np.asarray(feature, dtype=np.float32).reshape(1, -1)
+
+    if hasattr(model, "predict_proba"):
+        return model.predict_proba(feature)[0].astype(np.float32)
+
+    if hasattr(model, "decision_function"):
+        scores = model.decision_function(feature)
+        if scores.ndim == 1:
+            scores = np.vstack([-scores, scores]).T
+        return _softmax(scores)[0].astype(np.float32)
+
+    prediction = int(model.predict(feature)[0])
+    probabilities = np.zeros(len(label_encoder.classes_), dtype=np.float32)
+    probabilities[prediction] = 1.0
+    return probabilities
+
+
+def predict_emotion(audio, sr, return_details=False):
     feature = extract_feature(audio, sr)
-
-    # Ensure correct datatype
-    feature = np.array(feature, dtype=np.float32)
-
-    # Scale features
     feature = scaler.transform([feature])
 
-    # Predict
-    prediction = model.predict(feature)
+    probabilities = _predict_probabilities(feature)
+    top_index = int(np.argmax(probabilities))
+    emotion = str(label_encoder.classes_[top_index])
+    confidence = float(probabilities[top_index])
 
-    return label_encoder.inverse_transform(prediction)[0]
+    sorted_idx = np.argsort(probabilities)[::-1]
+    margin = float(
+        probabilities[sorted_idx[0]] - probabilities[sorted_idx[1]]
+    ) if len(sorted_idx) > 1 else float(probabilities[sorted_idx[0]])
 
-# ==============================
-# 🔹 Analyze Emotion Timeline
-# ==============================
+    if return_details:
+        return {
+            "emotion": emotion,
+            "confidence": confidence,
+            "margin": margin,
+            "probabilities": {
+                str(label): float(probabilities[i])
+                for i, label in enumerate(label_encoder.classes_)
+            },
+        }
+
+    return emotion
+
 
 def analyze_emotion(audio, sr, predict_function):
     chunks = split_audio(audio, sr)
+    if not chunks:
+        return []
+
+    energies = np.array([chunk["energy"] for chunk in chunks], dtype=np.float32)
+    energy_threshold = max(0.004, float(np.percentile(energies, 35)))
+
+    voiced_chunks = [chunk for chunk in chunks if chunk["energy"] >= energy_threshold]
+    if not voiced_chunks:
+        voiced_chunks = [max(chunks, key=lambda item: item["energy"])]
 
     timeline = []
+    for chunk_info in voiced_chunks:
+        prediction = predict_function(chunk_info["chunk"], sr, return_details=True)
 
-    for i, chunk in enumerate(chunks):
-        emotion = predict_function(chunk, sr)
+        if isinstance(prediction, dict):
+            emotion = prediction.get("emotion", "unknown")
+            confidence = float(prediction.get("confidence", 0.0))
+            margin = float(prediction.get("margin", 0.0))
+            probabilities = prediction.get("probabilities", {})
+        else:
+            emotion = str(prediction)
+            confidence = 0.0
+            margin = 0.0
+            probabilities = {}
 
-        timeline.append({
-            "time": f"{i*3}-{(i+1)*3} sec",
-            "emotion": emotion
-        })
+        timeline.append(
+            {
+                "time": f"{chunk_info['start']:.1f}-{chunk_info['end']:.1f} sec",
+                "emotion": emotion,
+                "confidence": round(confidence, 4),
+                "margin": round(margin, 4),
+                "energy": round(float(chunk_info["energy"]), 5),
+                "probabilities": probabilities,
+            }
+        )
 
     return timeline

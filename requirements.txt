@@ -1,24 +1,12 @@
-# Use this file to specify the dependencies of your project. You can install them using pip:
-
-# used for the web application & for loading the trained model
-
-flask         # for creating the web application
-numpy         # for numerical operations and array handling
-librosa       # for audio processing and feature extraction
-scikit-learn  # for SVM and other ML utilities
-soundfile     # for reading audio files
-scipy         # for signal processing
-pickle        # for saving and loading the trained model
-
-# Used in training and evaluation
-
-pandas        # for data manipulation and analysis
-matplotlib    # for plotting and visualization
-
-# Datasets used for training and evaluation
-
-# RAVDESS dataset for speech emotion recognition
-ravdess        # for accessing the RAVDESS dataset
-
-opencv-python  # for image processing (if needed for visualization)
-deepface       # for facial emotion recognition (if needed)
+flask
+numpy
+librosa
+scikit-learn
+sounddevice
+soundfile
+scipy
+pandas
+matplotlib
+kagglehub
+opencv-python
+deepface
